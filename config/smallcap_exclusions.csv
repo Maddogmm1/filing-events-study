@@ -1,0 +1,4 @@
+# Filing-events study (FE): tickers or companies removed from the price universe, each with a reason and evidence.
+# reason_code: TICKER_REUSE | BAD_PRICES | SPLIT_ERROR | OTHER. evidence: a readiness-report reference or a link.
+# Rows are added only from data-quality evidence, never after looking at strategy results.
+cik,ticker,reason_code,evidence,added_on

@@ -1,0 +1,163 @@
+# DRAFT r7 (27 Oct 2026; r6 plus the price-mask review, comment-only change). Owner APPROVED the decision-pack options on 26 Oct 2026 21:42 (D1a, D2a, D3c, D4 rule, D5c, D6b,
+# D7, D8, D9, D10a/b/c) and option A of the G7 audit on 27 Oct 2026 16:21 (D10d). Still a DRAFT and NOT LOCKED: lock only
+# after the remaining preconditions below. Nothing has been run under it. Changes from r3 are tagged [Dn]; r5 additions
+# [r5]; r6 additions [r6]. Requires the D10a, D10b, D10c and D10d patches.
+# Readiness evidence: METZ Claude/01_Filing_Events_Study/04_Readiness/ (Readiness Report v2, G7 and G7r2 hand classifications).
+# Lock preconditions [D1a, r5, r6]: (1) MET 27 Oct: sc_acceptance_truth covers 100% of in-scope filings, G3c sample
+#   reproduced; (2) [r6] G7 replaced: cause rule r2 is used with survivorship_label_error_allowance below; the audits are
+#   reported, not a gate (first audit 97.4% class under r1; fresh audit 88.9% class / 83.3% label under r2, which failed the
+#   pre-set 90% criteria); (3) [r7] identity and price-spike review done (FE review pack v1, rules fixed before the evidence):
+#   617 rows in config/smallcap_price_masks.csv (change D10e): 611 reversing one-day moves masked (282 with bad-print evidence;
+#   the candidate set is wider than readiness v1's 287 because it also takes 45-80% drops that rebound over 80%), and 6
+#   hand-checked SPAC/shell/predecessor eras masked; the other 260 identity flags get no mask (254 show no break before
+#   or near the registrant's first filing under rule I; 6 rule hits were judged by hand to be the same company earlier in
+#   its life); no whole ticker excluded; (4) readiness re-run with
+#   r6/r7 and the D10d/D10e patches; (5) this file unchanged afterwards.
+# Study name [D7]: "Terminal filing-events study (FE)". Not the legacy Quant Trader (M6) "Phase 5" overnight-gap study.
+# To adopt: copy to research/filing_events_v1.toml, run `uv run qterm research-lock research/filing_events_v1.toml`,
+# commit both files, and only then run `uv run qterm event-run ...`.
+name = "filing_events_v1"
+kind = "event_study"
+
+# ---- universe (owner review item 1) -----------------------------------------------------------------
+# Every SEC operating-company filer, including those delisted since (SEC's bulk submissions file). Shell companies excluded.
+# Eligible on day -1 if: close >= $2 (removes sub-$2 names whose quoted spreads and manipulation risk dominate any drift),
+# and 20-session average dollar volume between $200k (a £50-100 order is a trivial share of a day's trading) and $20m
+# (above this, published evidence finds post-announcement drift largely gone). Thresholds are fixed now and will not be
+# changed after any strategy result is seen. Expected coverage is measured by `qterm smallcap-readiness` before locking.
+universe = "SEC_OPERATING_FILERS"
+exclude_sic = [6770]
+min_price = 2.0
+min_adv_usd = 200000
+max_adv_usd = 20000000
+
+# ---- timing (owner review item 3) --------------------------------------------------------------------
+# Day 0 = the session of acceptance if SEC accepted the filing before 16:00 New York time on a session day (the price can
+# react that day), otherwise the next session; no acceptance time -> treated as after the close. The acceptance-time
+# zone is checked by the readiness report before locking.
+# The $2 test uses the price as it traded that day: Yahoo's split-adjusted close is un-adjusted for later splits.
+# Returns are measured from the last traded price, so a move across a missing day is kept; after a company's last
+# price the position is frozen at that price (abnormal return = minus the benchmark).
+# H1: reaction = sum of daily abnormal returns on days 0, +1, +2. Signal formed after day +2 closes; entry at the close of
+#     day +3 (the next tradable session); exit at the close 60 sessions after entry.
+# H2: the filing is the signal, known by the close of day 0; entry at the close of day +1; exit 60 sessions after entry.
+hold_sessions = 60
+# [D3c] Sessions and close times from the NYSE calendar (half-days close at 13:00). Same-session day 0 only if SEC accepted
+# the filing at least 30 minutes before that session's close (EDGAR dissemination can lag at peak times); otherwise next session.
+calendar = "XNYS"
+dissemination_buffer_minutes = 30
+# [D4, r5] Entry rule fixed before any return was computed: the day +3 open is primary only if under 5% of day +3 opens repeat
+# the previous close or are flat bars. Readiness G8b found 7.58%, so the CLOSE of day +3 is primary (as the brief allowed when
+# the open cannot be implemented reliably). The day +3 open runs as variation V5, with an extra 150 bps one-way cost stress.
+# [r5] Acceptance times: SEC's own index-page time (sc_acceptance_truth). The bulk file's times carry 0, 1 or 2 UTC
+# conversions (readiness G3c: about 53 / 18 / 30%). Priced events without a verified time are excluded and counted.
+acceptance_time_source = "sec_index"
+# [r5] Universe exchanges: Nasdaq and NYSE labels in SEC's ticker file (NYSE American appears under NYSE); Cboe (44) and
+# Texas (12) not added (readiness G2).
+
+# ---- windows (owner review item 2) --------------------------------------------------------------------
+# Each window is used once, in order. An event belongs to a window only if both entry and exit fall inside it.
+# The sealed window is not a substitute for survivorship-free history; coverage is reported for every window.
+dev_start = "2005-01-01"
+dev_end = "2017-12-31"
+validation_end = "2021-12-31"
+sealed_start = "2022-01-01"
+
+# ---- hypotheses (owner review items 3 and 4) -----------------------------------------------------------
+# H1  post-announcement reaction continuation: earnings 8-Ks (Item 2.02) whose 3-day abnormal reaction exceeds the 90th
+#     percentile of reactions in the previous 365 days of earnings events (past only; needs 200 prior events). Long.
+# H1S the same, excluding companies with a late filing, non-reliance or auditor-change filing in the previous 365 days
+#     (H2 used as a negative screen, whether or not shorting is possible).
+# H2A late filing notices (NT 10-K, NT 10-Q). Short.
+# H2B non-reliance on previously issued financials (8-K Item 4.02). Short.
+# H2C auditor change (8-K Item 4.01, where the filing has no Item 4.02). [D2a] EXPLORATORY ONLY: its verdict line is not a
+#     hypothesis test and is not reported as PASS or FAIL, because resignations (bad news) and dismissals (often good news)
+#     are pooled. A resignation-only test needs its own protocol and the Item 304 classifier.
+# H2  [D2a] H2A + H2B combined (H2C excluded). Judged only after each part is reported separately.
+# H3  [D6b] Long leg = H1 positions; short leg = H2 (H2A + H2B) positions. One open position per company per side across all
+#     categories. Each session: 0.5 x equal-weight mean of open longs + 0.5 x equal-weight mean of open shorts; a side with
+#     nothing open contributes 0 (cash). Estimand: mean monthly net return of that portfolio (3-month block bootstrap).
+#     Run UNCONDITIONALLY as a pre-registered trial, whatever the standalone results.
+# Abnormal return = stock daily return minus the equal-weight daily return of eligible stocks in the same dollar-volume
+# quintile (quintiles from the previous day), summed over the holding period. Original filings only; one open position per
+# company, side and category (a new one only after the previous one has exited). The H1S screen checks every bad filing
+# the company made, whether or not it was priced or eligible at the time.
+combined_short_kinds = ["late", "nonrel"]   # [D2a]
+dedupe_by = "side"                          # [D6b] one open position per company and side, across categories
+h3_side_weighting = "equal_sides"           # [D6b]
+hypotheses = ["H1_reaction_continuation", "H1S_continuation_screened", "H2A_late_filing", "H2B_non_reliance",
+              "H2C_auditor_change", "H2_bad_filings_combined", "H3_long_short_combined"]
+
+# ---- costs (owner review item 5) ------------------------------------------------------------------------
+# Primary: 100 bps one way. Stress: 200 bps one way (reported with every result). Instrument-specific: half the
+# Corwin-Schultz (2012) spread estimated from each stock's daily highs and lows over the 20 sessions before entry, plus the
+# FX fee; reported alongside, with the number of positions lacking an estimate. Short financing at 6% a year is an
+# ASSUMPTION, not a verified Trading 212 rate; no historical financing data is available and this is reported.
+cost_bps_one_way = 100
+sensitivity_cost_bps_one_way = 200
+open_entry_cost_stress_bps_one_way = 150   # [r5] reported for variation V5 (open entry), on top of the 200 bps stress
+short_financing_stress_annual = [0.10, 0.20]   # [r5] Trading 212's short rate includes the stock's borrow fee; reported with every short result
+survivorship_label_error_allowance = 0.10      # [r6] see the survivorship note below (D10d)
+fx_fee_bps = 15                        # Trading 212 FX conversion fee per side (assumption; check the current fee page)
+short_financing_annual = 0.06
+# Longs are assumed to be bought as shares (Invest or ISA account), so no financing is charged on them. If longs were
+# CFDs, their overnight financing would have to be added; this is reported as unavailable data.
+
+# ---- inference and pass criteria (owner review item 6) -------------------------------------------------
+# Inference: (a) mean net abnormal return per position with a 95% moving-block bootstrap interval over calendar months of
+#     entry, blocks of 3 consecutive months (2,000 draws, seed 0), because 60-session positions overlap about 3 months;
+#   (b) calendar-time portfolio: each session, the equal-weighted mean of open positions' net daily abnormal returns
+#     (costs spread over each position's life; no position = 0), summed to months; Newey-West t with 3 lags, since 60-
+#     session holdings overlap about three months;
+#   (c) deflated Sharpe ratio (Bailey and Lopez de Prado 2014) of that monthly series: the probability that its Sharpe
+#     exceeds the expected maximum Sharpe of N unskilled strategies, N = max_dev_trials (the whole budget, fixed now, so
+#     the order in which hypotheses are run cannot change any verdict),
+#     with the per-trial Sharpe variance taken as the sampling variance (1 + SR^2/2)/(n - 1) because the cross-trial
+#     variance is unknown. 0.95 means at most a 5% chance the result is the luckiest of N null trials.
+# Minimum events: each window needs enough positions for an 80%-power test of a 2% net 60-session abnormal return,
+#     assuming a 25% per-position standard deviation: n = ((1.96 + 0.84) x 0.25 / 0.02)^2, about 1,225. For
+#     H2B and H2C, rarer events with larger reported effects, the target is 4%: about 306. Below the minimum the result is
+#     INCONCLUSIVE, never PASS or FAIL. These numbers are fixed from the assumption, not from data.
+# [D5c] Minimums use one economic threshold for every hypothesis: a 2% net abnormal return over 60 sessions (the smallest
+#     effect worth acting on, not the effect expected), 80% power, two-sided 5%, per-position SD 25% (assumption), exact
+#     z-values, design effect 1.5 for overlap and clustering (assumption), rounded up: 1,840 positions. This replaces the
+#     1,225 / 306 figures above. The deflated-Sharpe requirement makes the true power lower than 80%.
+economic_threshold_net = 0.02
+# Signs: every return is multiplied by the position's side, so all tests are one-sided in the predicted direction.
+# Rule: PASS only if (a) the interval excludes zero with the predicted sign, (b) Newey-West t > 2, (c) deflated Sharpe
+#     >= 0.95, with the primary cost. Supported only if PASS in development AND validation. Only a supported hypothesis
+#     may be tested once on the sealed window.
+max_dev_trials = 17                    # [D8] frozen allocation below; unchanged total, so the deflation is unchanged
+# [D8] Run order and allocation (a lapsed slot is never reassigned; any crash is logged by hand in research/TRIAL_LEDGER.md):
+#   P1 H1, P2 H1S, P3 H2A, P4 H2B, P5 H2, P6 H3, E1 H2C (exploratory),
+#   V1 H1 hold 20, V2 H2A hold 20, V3 H2B hold 20, V4 H1 decile 0.95, V5 H1 entry at open (lapses if G8 fails),
+#   V6 placebo: random 10% of eligible earnings events (seed 0), V7 placebo: other 8-Ks short (needs those filings loaded;
+#   lapses if not built before lock), V8 H1S hold 120, V9 and V10 reserve (use written in the ledger before the run).
+# [D1a] Survivorship: every result reports favourable / central / adverse bounded means (decision pack C4: failure -30/-55/-100%,
+#   acquisition +30/+15/0% for longs and the mirror for shorts). A PASS is "robust to survivorship" only if the adverse bound
+#   keeps the predicted sign and is at least half of economic_threshold_net; otherwise the conclusion says so.
+# [r6] Label errors: in the adverse scenario, survivorship_label_error_allowance of the exits in the class that favours the
+#   position (acquired for longs, failure for shorts) take the unfavourable outcome. 0.10 is at least twice the error rate
+#   seen in that direction in the two audits (0/35 long, 2/40 short). A label-free adverse bound (every exit inside the window
+#   takes the worst outcome) is reported with every result as a sensitivity; it is not the robustness test.
+# [r6] Survivorship of the price source: prices exist mainly for companies still trading or recently delisted. Among earnings
+#   events of companies listed at the time, 42% (development) and 67% (validation) are priced (Readiness v2, S1). Every H1/H1S
+#   conclusion is stated as applying to "companies with surviving price history". Pre-registered check, not a trial: the H1
+#   and H1S results are reported separately for development and validation next to their coverage; a gap is read as possible
+#   survivorship, not as decay, and the conclusion says so.
+# [r6] Reporting: excluded_no_verified_time_in_scope counts only events without a verified time that were in the D10c scope.
+# Disclosure: hypothesis choice was informed by published studies whose samples overlap 2022-2024 (Subrahmanyam 2025;
+#   sec-api.io 2007-2023). No parameter was chosen from those years.
+
+[min_events]                           # [D5c]
+H1_reaction_continuation = 1840
+H1S_continuation_screened = 1840
+H2A_late_filing = 1840
+H2B_non_reliance = 1840
+H2C_auditor_change = 1840              # exploratory: reported, not judged
+H2_bad_filings_combined = 1840
+H3_long_short_combined = 1840          # H3 counts positions on both legs
+
+# ---- governance (owner review item 7) ---------------------------------------------------------------------
+# Data pipeline first; no strategy result before this file is locked and committed. The sealed window is unreadable by
+# development and validation runs (enforced in the price query). No live trading and no broker connection.
